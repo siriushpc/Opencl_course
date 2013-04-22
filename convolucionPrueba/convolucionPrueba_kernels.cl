@@ -1,0 +1,80 @@
+/*
+ * Application convolucionPrueba
+ * Copyright (C) kiwi 2013 <kiwi@kiwi>
+ * 
+convolucionPrueba is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * convolucionPrueba is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+__kernel
+void convolution(__global float* imageIn,__global float* imageOut,
+				__constant float* filter, int rows, int cols,
+				int filterWidth,__local float* localImage,
+				int localHeight,int localWidth) {
+	
+	// Determine the amount of padding for this filter
+	int filterRadius = (filterWidth/2);
+	int padding = filterRadius * 2;
+
+	// Determine the size of the workgroup output region
+	int groupStartCol = get_group_id(0)*get_local_size(0);
+	int groupStartRow = get_group_id(1)*get_local_size(1);
+
+	// Determine the local ID of each work-item
+	int localCol = get_local_id(0);
+	int localRow = get_local_id(1);
+
+	// Determine the global ID of each work-item. work-items
+	// representing the output region will have a unique global
+	// ID
+	int globalCol = groupStartCol + localCol;
+	int globalRow = groupStartRow + localRow;
+
+	// Cache the data to local memory
+	// Step down rows
+	for(int i = localRow; i < localHeight; i += get_local_size(1)) {
+		int curRow = groupStartRow+i;
+
+		// Step across columns
+		for(int j = localCol; j < localWidth; j += get_local_size(0)) {
+			int curCol = groupStartCol+j;
+
+			// Perform the read if it is in bounds
+			if(curRow < rows && curCol < cols) {
+				localImage[i*localWidth + j] =	imageIn[curRow*cols+curCol];
+			}
+		}
+	}
+	barrier(CLK_LOCAL_MEM_FENCE);
+
+	// Perform the convolution
+	if(globalRow < rows-padding && globalCol < cols-padding) {
+	
+		// Each work-item will filter around its start location
+		//(starting from the filter radius left and up)
+		float sum = 0.0f;
+		int filterIdx = 0;
+
+		// Not unrolled
+		for(int i = localRow; i < localRow+filterWidth; i++) {
+			int offset = i*localWidth;
+			for(int j = localCol; j < localCol+filterWidth; j++){
+				sum += localImage[offset+j] * filter[filterIdx++];
+			}
+		}
+
+		// Write the data out
+		imageOut[(globalRow+filterRadius)*cols + (globalCol+filterRadius)] = sum;
+	}
+	return;
+}
